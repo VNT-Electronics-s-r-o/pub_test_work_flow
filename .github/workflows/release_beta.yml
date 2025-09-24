@@ -1,0 +1,58 @@
+name: Upload BETA firmware (multi-variant)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SemVer verze (např. 1.2.3)'
+        required: true
+
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      VERSION: ${{ github.event.inputs.version }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate file names & presence
+        run: |
+          test -d release-assets || { echo "Missing release-assets/"; exit 1; }
+          ls -la release-assets
+          FAIL=0
+          REQUIRED="P15B1 P10B1 P8B1 P6B1 P15B2 P8B2 P6B2"
+          for MUT in $REQUIRED; do
+            FILE="EDCXXX-${MUT}-v${VERSION}.bin"
+            if [ ! -f "release-assets/$FILE" ]; then
+              echo "::error::Missing expected asset: $FILE"
+              FAIL=1
+            fi
+            echo "$FILE" | grep -Eq "^EDCXXX-P(6|8|10|15)B(1|2)-v${VERSION}\.bin$" || { echo "::error::Filename invalid: $FILE"; FAIL=1; }
+          done
+          [ $FAIL -eq 0 ] || exit 1
+
+      - name: Generate SHA-256
+        run: |
+          cd release-assets
+          shopt -s nullglob
+          for f in *.bin; do
+            sha256sum "$f" | awk '{print $1 "  " FILENAME}' FILENAME="$f" > "$f.sha256"
+          done
+
+      - name: Create or Update BETA release (as draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}-beta
+          name: Firmware v${{ env.VERSION }} BETA
+          draft: true
+          prerelease: false
+          files: |
+            release-assets/*.bin
+            release-assets/*.sha256
