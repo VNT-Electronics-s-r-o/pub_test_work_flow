@@ -2,7 +2,7 @@ name: Upload BETA firmware (multi-variant)
 
 on:
   push:
-    branches: [ master ]             # změň na 'main', pokud používáš main
+    branches: [ main ]             # změň na 'main', pokud používáš main
     paths:
       - 'release-assets/**'
   workflow_dispatch:
@@ -151,3 +151,4 @@ jobs:
           files: |
             out/*-beta.bin
             out/*-beta.bin.sha256
+
