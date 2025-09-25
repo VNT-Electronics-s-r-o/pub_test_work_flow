@@ -1,11 +1,10 @@
 name: Upload BETA firmware (multi-variant)
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'SemVer verze (např. 1.2.3)'
-        required: true
+  push:
+    branches: [ master ]          # ← změň na 'main', pokud je potřeba
+    paths:
+      - 'release-assets/**'       # spouštěj jen když se mění assets
 
 jobs:
   beta:
@@ -13,21 +12,54 @@ jobs:
     permissions:
       contents: write
 
-    env:
-      VERSION: ${{ github.event.inputs.version }}
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
+      # Najdi verzi z názvů souborů ...-vX.Y.Z.bin a ověř, že jsou všechny stejné
+      - name: Detect version from filenames
+        id: detect
+        run: |
+          set -e
+          test -d release-assets || { echo "Missing release-assets/"; exit 1; }
+          shopt -s nullglob
+          FILES=(release-assets/*.bin)
+          (( ${#FILES[@]} > 0 )) || { echo "::error::No .bin files in release-assets/"; exit 1; }
+
+          # extrahuj verzi z prvního souboru
+          FIRST="${FILES[0]}"
+          if [[ "$FIRST" =~ -v([0-9]+\.[0-9]+\.[0-9]+)\.bin$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "::error::Cannot parse version from filename: $FIRST"
+            exit 1
+          fi
+
+          # ověř, že všechny soubory mají stejnou verzi
+          FAIL=0
+          for f in "${FILES[@]}"; do
+            if [[ ! "$f" =~ -v${VERSION}\.bin$ ]]; then
+              echo "::error::Mixed versions detected. '$f' != v${VERSION}"
+              FAIL=1
+            fi
+          done
+          [ $FAIL -eq 0 ] || exit 1
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
       - name: Validate file names & presence
         run: |
-          test -d release-assets || { echo "Missing release-assets/"; exit 1; }
+          set -e
+          VERSION='${{ steps.detect.outputs.version }}'
           ls -la release-assets
           FAIL=0
+
+          # UPRAV dle toho, které mutace požaduješ vždy vydat:
           REQUIRED="P15B1 P10B1 P8B1 P6B1 P15B2 P8B2 P6B2"
+
           for MUT in $REQUIRED; do
             FILE="EDCXXX-${MUT}-v${VERSION}.bin"
             if [ ! -f "release-assets/$FILE" ]; then
@@ -49,9 +81,9 @@ jobs:
       - name: Create or Update BETA release (as draft)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}-beta
-          name: Firmware v${{ env.VERSION }} BETA
-          draft: true
+          tag_name: v${{ steps.detect.outputs.version }}-beta
+          name: Firmware v${{ steps.detect.outputs.version }} BETA
+          draft: true          # draft = není public, není Latest, není pre-release
           prerelease: false
           files: |
             release-assets/*.bin
