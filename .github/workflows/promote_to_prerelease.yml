@@ -25,36 +25,59 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Get beta release JSON
-        id: getrel
+      - name: Find DRAFT beta release (no tag yet)
+        id: find
         run: |
           set -e
-          RJSON=$(gh api repos/${GITHUB_REPOSITORY}/releases/tags/v${VERSION}-beta)
-          echo "$RJSON" > rel.json
-          RID=$(jq -r '.id' rel.json)
-          echo "rid=$RID" >> $GITHUB_OUTPUT
+          # Stáhni posledních 100 releasů (drafty i publikované)
+          gh api repos/${GITHUB_REPOSITORY}/releases?per_page=100 > list.json
 
-      - name: Mark as prerelease and publish
+          # Hledej DRAFT, který odpovídá dané verzi:
+          # 1) name == "Firmware vX.Y.Z BETA"
+          # 2) nebo tag_name == "vX.Y.Z-beta" (někdy ho draft má vyplněný, ale tag v gitu ještě neexistuje)
+          RID=$(jq -r --arg ver "v${VERSION}" '
+            .[] | select(.draft==true) |
+            select(
+              (.name == ("Firmware " + $ver + " BETA")) or
+              (.tag_name == ($ver + "-beta"))
+            ) | .id
+          ' list.json | head -n1)
+
+          if [ -z "$RID" ] || [ "$RID" = "null" ]; then
+            echo "::error::Draft release for version v${VERSION} not found. Check the name/tag or that the BETA workflow finished."
+            exit 1
+          fi
+
+          echo "rid=$RID" >> $GITHUB_OUTPUT
+          # Ulož i celý JSON releasu pro pozdější práci s assety
+          gh api repos/${GITHUB_REPOSITORY}/releases/$RID > rel.json
+          echo "Found DRAFT release id=$RID"
+
+      - name: Publish as PRE-RELEASE (prerelease=true, draft=false)
         run: |
-          gh api -X PATCH repos/${GITHUB_REPOSITORY}/releases/${{ steps.getrel.outputs.rid }} \
+          gh api -X PATCH repos/${GITHUB_REPOSITORY}/releases/${{ steps.find.outputs.rid }} \
             -f draft=false -f prerelease=true \
             -f name="Firmware v${VERSION}${RC_SUFFIX:+ ${RC_SUFFIX#-} } (pre-release)"
 
-      - name: Optionally rename assets (add suffix)
+      - name: Optionally rename assets (add suffix like -rc1)
         if: ${{ env.RC_SUFFIX != '' }}
         run: |
           set -e
+          # Po publishi si případně načti čerstvou verzi releasu (asset ID zůstávají)
           ASSETS=$(jq -c '.assets[] | {id: .id, name: .name}' rel.json)
           while read -r A; do
             AID=$(echo "$A" | jq -r '.id')
             ANAME=$(echo "$A" | jq -r '.name')
-            if [[ "$ANAME" == *.bin || "$ANAME" == *.sha256 ]]; then
-              BASE="${ANAME%.*}"
-              EXT="${ANAME##*.}"
-              if [[ "$BASE" == *"-v${VERSION}" ]]; then
-                NEW="${BASE}${RC_SUFFIX}.${EXT}"
-                echo "Renaming $ANAME -> $NEW"
-                gh api -X PATCH repos/${GITHUB_REPOSITORY}/releases/assets/${AID} -f name="$NEW" >/dev/null
-              fi
-            fi
+            case "$ANAME" in
+              *.bin|*.sha256)
+                BASE="${ANAME%.*}"
+                EXT="${ANAME##*.}"
+                # Cíl: ...-vX.Y.Z[-rcN].ext → přidat -rcN pokud chybí
+                if [[ "$BASE" == *"-v${VERSION}" ]]; then
+                  NEW="${BASE}${RC_SUFFIX}.${EXT}"
+                  echo "Renaming $ANAME -> $NEW"
+                  gh api -X PATCH repos/${GITHUB_REPOSITORY}/releases/assets/${AID} -f name="$NEW" >/dev/null
+                fi
+                ;;
+            esac
           done <<< "$ASSETS"
