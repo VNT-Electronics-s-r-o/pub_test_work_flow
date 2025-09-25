@@ -124,5 +124,6 @@ jobs:
           draft: true
           prerelease: false
           files: |
-            release-assets/*.bin
-            release-assets/*.sha256
+            release-assets/*-beta.bin
+            release-assets/*-beta.sha256
+
