@@ -2,7 +2,7 @@ name: Upload BETA firmware (multi-variant)
 
 on:
   push:
-    branches: [ master ]          # ← změň na 'main', pokud je potřeba
+    branches: [ main ]          # ← změň na 'main', pokud je potřeba
     paths:
       - 'release-assets/**'       # spouštěj jen když se mění assets
 
@@ -88,3 +88,4 @@ jobs:
           files: |
             release-assets/*.bin
             release-assets/*.sha256
+
